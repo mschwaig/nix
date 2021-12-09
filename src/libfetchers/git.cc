@@ -238,6 +238,7 @@ struct GitInputScheme : InputScheme
 
             try {
                 if (haveCommits) {
+                    runProgram("git", true, { "-C", actualUrl, "update-index", "-q", "--really-refresh" });
                     runProgram("git", true, { "-C", actualUrl, "diff-index", "--quiet", "HEAD", "--" });
                     clean = true;
                 }
