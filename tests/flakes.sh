@@ -27,8 +27,9 @@ flakeFollowsB=$TEST_ROOT/follows/flakeA/flakeB
 flakeFollowsC=$TEST_ROOT/follows/flakeA/flakeB/flakeC
 flakeFollowsD=$TEST_ROOT/follows/flakeA/flakeD
 flakeFollowsE=$TEST_ROOT/follows/flakeA/flakeE
+dirtyFlakeDir=$TEST_ROOT/dirtyFlake
 
-for repo in $flake1Dir $flake2Dir $flake3Dir $flake7Dir $templatesDir $nonFlakeDir $flakeA $flakeB $flakeFollowsA; do
+for repo in $flake1Dir $flake2Dir $flake3Dir $flake7Dir $templatesDir $nonFlakeDir $flakeA $flakeB $flakeFollowsA $dirtyFlakeDir; do
     rm -rf $repo $repo.tmp
     mkdir -p $repo
     git -C $repo init
@@ -822,3 +823,16 @@ nix store delete $(nix store add-path $badFlakeDir)
 
 [[ $(nix path-info      $(nix store add-path $flake1Dir)) =~ flake1 ]]
 [[ $(nix path-info path:$(nix store add-path $flake1Dir)) =~ simple ]]
+
+# check that dirty-tree handling does not get confused by locale
+# See: https://github.com/NixOS/nix/pull/5758#discussion_r781004543
+(cd $dirtyFlakeDir && nix flake init)
+
+# should be correctly detected as dirty
+[[ $(export LANG=fr_FR; nix flake show $dirtyFlakeDir 2>&1 >/dev/null) =~ dirty ]]
+[[ $(export LC_ALL=fr_FR; nix flake show $dirtyFlakeDir 2>&1 >/dev/null) =~ dirty ]]
+
+(cd $dirtyFlakeDir && git add flake.nix flake.lock && git commit -m "initial commit")
+
+# should be correctly detected as clean
+[[ ! $(export LC_ALL=fr_FR; nix flake show $dirtyFlakeDir 2>&1 >/dev/null) =~ dirty ]]

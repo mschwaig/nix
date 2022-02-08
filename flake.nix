@@ -101,6 +101,7 @@
             # Tests
             buildPackages.git
             buildPackages.mercurial # FIXME: remove? only needed for tests
+            buildPackages.glibcLocales # FIXME: remove? only needed for tests
             buildPackages.jq
           ]
           ++ lib.optionals stdenv.hostPlatform.isLinux [(buildPackages.util-linuxMinimal or buildPackages.utillinuxMinimal)];
