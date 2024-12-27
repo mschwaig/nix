@@ -1271,6 +1271,7 @@ struct CmdFlakeShow : FlakeCommand, MixJSON
                 auto showDerivation = [&]()
                 {
                     auto name = visitor.getAttr(state->sName)->getString();
+                    auto drvPath = visitor.getAttr(state->sDrvPath)->getString();
 
                     if (json) {
                         std::optional<std::string> description;
@@ -1280,6 +1281,7 @@ struct CmdFlakeShow : FlakeCommand, MixJSON
                         }
                         j.emplace("type", "derivation");
                         j.emplace("name", name);
+                        j.emplace("drvPath", drvPath);
                         j.emplace("description", description ? *description : "");
                     } else {
                         logger->cout("%s: %s '%s'",
