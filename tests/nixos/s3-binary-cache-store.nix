@@ -611,9 +611,11 @@ in
           # Generate signing keys
           server.succeed("nix key generate-secret --key-name cache.example.org > /tmp/sk1")
           server.succeed("nix key generate-secret --key-name other.example.org > /tmp/sk2")
+          server.succeed("nix key generate-secret --key-name third.example.org > /tmp/sk3")
 
           pk1 = server.succeed("nix key convert-secret-to-public < /tmp/sk1").strip()
           pk2 = server.succeed("nix key convert-secret-to-public < /tmp/sk2").strip()
+          pk3 = server.succeed("nix key convert-secret-to-public < /tmp/sk3").strip()
 
           # Test 1: Unsigned paths are rejected
           @setup_s3(required_signatures=[pk1])
@@ -668,18 +670,24 @@ in
               print("  ✓ Multiple required keys work (any one is sufficient)")
 
           # Test 6: RequireAllSignatures enforcement
-          @setup_s3(required_signatures=[pk1, pk2], require_all_signatures=True)
+          @setup_s3(required_signatures=[pk1, pk2, pk3], require_all_signatures=True)
           def test_require_all_signatures(bucket):
               store_url = make_s3_url(bucket)
 
               # Path signed with only pk1 should fail
               server.succeed(f"nix store sign --key-file /tmp/sk1 {PKGS['G']}")
               error = server.fail(f"{ENV_WITH_CREDS} nix copy --to '{store_url}' {PKGS['G']} 2>&1")
-              if "ALL of these keys" not in error or "1 out of 2 required" not in error:
+              if "ALL of these keys" not in error or "1 out of 3 required" not in error:
                   raise Exception(f"Expected error about ALL keys and signature count. Got: {error}")
 
-              # Path signed with both pk1 and pk2 should succeed
+              # Path signed with pk1 and pk2 (2 out of 3) should fail
               server.succeed(f"nix store sign --key-file /tmp/sk2 {PKGS['G']}")
+              error = server.fail(f"{ENV_WITH_CREDS} nix copy --to '{store_url}' {PKGS['G']} 2>&1")
+              if "ALL of these keys" not in error or "2 out of 3 required" not in error:
+                  raise Exception(f"Expected error about ALL keys and 2 out of 3. Got: {error}")
+
+              # Path signed with all three keys should succeed
+              server.succeed(f"nix store sign --key-file /tmp/sk3 {PKGS['G']}")
               server.succeed(f"{ENV_WITH_CREDS} nix copy --to '{store_url}' {PKGS['G']}")
               print("  ✓ RequireAllSignatures enforces all keys must sign")
 
