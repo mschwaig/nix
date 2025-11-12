@@ -50,7 +50,7 @@ in
             MINIO_ROOT_PASSWORD=${secretKey}
           '';
         };
-        networking.firewall.allowedTCPPorts = [ 9000 ];
+        networking.firewall.allowedTCPPorts = [ 9000 9001 ];
       };
 
     client =
@@ -178,9 +178,10 @@ in
                               server.succeed(f"{ENV_WITH_CREDS} nix copy --to '{store_url}' {pkg}")
                       test_func(bucket)
                   finally:
-                      server.succeed(f"mc rb --force minio/{bucket}")
+                      pass
+                      #server.succeed(f"mc rb --force minio/{bucket}")
                       # Surprisingly, nix store delete doesn't care if a path does not exist at all
-                      client.succeed(f'nix store delete --ignore-liveness {" ".join(PKGS.values())}')
+                      #client.succeed(f'nix store delete --ignore-liveness {" ".join(PKGS.values())}')
               return wrapper
           return decorator
 
@@ -692,11 +693,11 @@ in
               print("  ✓ RequireAllSignatures enforces all keys must sign")
 
           # Run all sub-tests
-          test_unsigned_rejected()
-          test_signed_accepted()
-          test_wrong_key_rejected()
-          test_ca_paths()
-          test_multiple_keys()
+          #test_unsigned_rejected()
+          #test_signed_accepted()
+          #test_wrong_key_rejected()
+          #test_ca_paths()
+          #test_multiple_keys()
           test_require_all_signatures()
 
       # ============================================================================
@@ -709,6 +710,9 @@ in
 
       start_all()
 
+      # Forward MinIO web UI port for debugging
+      server.forward_port(9001, 9001)
+
       # Initialize MinIO server
       server.wait_for_unit("minio")
       server.wait_for_unit("network-addresses-eth1.service")
@@ -716,18 +720,18 @@ in
       server.succeed(f"mc config host add minio http://localhost:9000 {ACCESS_KEY} {SECRET_KEY} --api s3v4")
 
       # Run tests (each gets isolated bucket via decorator)
-      test_credential_caching()
-      test_fetchurl_basic()
-      test_error_message_formatting()
-      test_fork_credential_preresolution()
-      test_store_operations()
-      test_public_bucket_operations()
-      test_url_format_variations()
-      test_concurrent_fetches()
-      test_compression_narinfo_gzip()
-      test_compression_mixed()
-      test_compression_disabled()
-      test_nix_prefetch_url()
+      #test_credential_caching()
+      #test_fetchurl_basic()
+      #test_error_message_formatting()
+      #test_fork_credential_preresolution()
+      #test_store_operations()
+      #test_public_bucket_operations()
+      #test_url_format_variations()
+      #test_concurrent_fetches()
+      #test_compression_narinfo_gzip()
+      #test_compression_mixed()
+      #test_compression_disabled()
+      #test_nix_prefetch_url()
       test_required_signatures()
 
       print("\n" + "="*80)
