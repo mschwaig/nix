@@ -366,6 +366,14 @@ private:
      */
     SingleDrvOutputs registerOutputs();
 
+    /**
+     * With a `store-path-seed` set, record the unseeded equivalent of
+     * each freshly registered output: the store path, NAR hash and
+     * references it would have had if built without a seed (see the
+     * `store-path-seeding` experimental feature).
+     */
+    void recordUnseededOutputs(const std::map<std::string, ValidPathInfo> & infos);
+
 protected:
 
     /**

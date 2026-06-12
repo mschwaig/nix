@@ -94,6 +94,7 @@ headers = [ config_pub_h ] + files(
   'store-reference.hh',
   'store-registration.hh',
   'uds-remote-store.hh',
+  'unseed.hh',
   'worker-protocol-connection.hh',
   'worker-protocol-impl.hh',
   'worker-protocol.hh',

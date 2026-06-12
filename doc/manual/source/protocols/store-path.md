@@ -29,11 +29,16 @@ where
 ## Fingerprint
 
 - ```ebnf
-  fingerprint = type ":sha256:" inner-digest ":" store ":" name
+  fingerprint = type ":sha256:" inner-digest ":" store [ ":" seed ] ":" name
   ```
 
   Note that it includes the location of the store as well as the name to make sure that changes to either of those are reflected in the hash
   (e.g. you won't get `/nix/store/<digest>-name1` and `/nix/store/<digest>-name2`, or `/gnu/store/<digest>-name1`, with equal hash parts).
+
+- `seed` = the value of the [`store-path-seed`](@docroot@/command-ref/conf-file.md#conf-store-path-seed) setting, if set
+  (requires the [`store-path-seeding`](@docroot@/development/experimental-features.md#xp-feature-store-path-seeding) experimental feature).
+  This component is absent entirely when no seed is configured, in which case the fingerprint is unchanged from previous versions of Nix.
+  A configured seed deterministically shifts every store path away from its canonical (unseeded) location, which is used to detect store path references in build outputs that the reference scanner cannot see.
 
 - `type` = one of:
 

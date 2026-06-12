@@ -1,6 +1,7 @@
 #include "nix/cmd/command.hh"
 #include "nix/main/shared.hh"
 #include "nix/store/store-api.hh"
+#include "nix/store/local-store.hh"
 #include "nix/main/common-args.hh"
 #include "nix/store/nar-info.hh"
 
@@ -63,6 +64,32 @@ pathInfoToJSON(Store & store, const StorePathSet & storePaths, bool showClosureS
             /* Hack in the store dir for now. TODO update the data type
                instead. */
             jsonObject["storeDir"] = store.storeDir;
+
+            /* With the `store-path-seeding` experimental feature, expose
+               the recorded unseeded equivalent, if any. */
+            if (experimentalFeatureSettings.isEnabled(Xp::StorePathSeeding)) {
+                if (auto * localStore = dynamic_cast<LocalStore *>(&store)) {
+                    if (auto row = localStore->queryUnseededPath(info->path)) {
+                        auto unseeded = json::object();
+                        unseeded["path"] = format == PathInfoJsonFormat::V1
+                                               ? store.printStorePath(row->unseededPath)
+                                               : std::string(row->unseededPath.to_string());
+                        if (row->narHash)
+                            unseeded["narHash"] = row->narHash->to_string(HashFormat::SRI, true);
+                        if (row->narSize)
+                            unseeded["narSize"] = *row->narSize;
+                        if (row->references) {
+                            auto refs = json::array();
+                            for (auto & r : *row->references)
+                                refs.push_back(
+                                    format == PathInfoJsonFormat::V1 ? store.printStorePath(r)
+                                                                     : std::string(r.to_string()));
+                            unseeded["references"] = std::move(refs);
+                        }
+                        jsonObject["unseeded"] = std::move(unseeded);
+                    }
+                }
+            }
 
             if (showClosureSize) {
                 StorePathSet closure;

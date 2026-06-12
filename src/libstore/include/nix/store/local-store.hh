@@ -2,6 +2,7 @@
 ///@file
 
 #include "nix/store/sqlite.hh"
+#include "nix/store/unseed.hh"
 
 #include "nix/store/pathlocks.hh"
 #include "nix/store/store-api.hh"
@@ -450,6 +451,27 @@ public:
     std::optional<std::pair<int64_t, UnkeyedRealisation>> queryRealisationCore_(State & state, const DrvOutput & id);
     void queryRealisationUncached(
         const DrvOutput &, Callback<std::shared_ptr<const UnkeyedRealisation>> callback) noexcept override;
+
+    /**
+     * Record the unseeded equivalent of a store object created while a
+     * `store-path-seed` was set (experimental feature
+     * `store-path-seeding`).
+     */
+    void upsertUnseededPath(const StorePath & seededPath, const UnseededPathInfo & info);
+
+    /**
+     * Look up the recorded unseeded equivalent of `seededPath`, if
+     * any.
+     */
+    std::optional<UnseededPathInfo> queryUnseededPath(const StorePath & seededPath);
+
+    /**
+     * Return the recorded unseeded NAR hashes of all seeded store
+     * objects whose unseeded equivalent is `unseededPath` (i.e. the
+     * same output built under different seeds). Used to detect
+     * irreproducibility or hidden references across seeds.
+     */
+    std::map<StorePath, Hash> queryUnseededNarHashes(const StorePath & unseededPath);
 
     std::optional<std::string> getVersion() override;
 

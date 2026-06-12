@@ -3,8 +3,10 @@
 
 #include "nix/store/path.hh"
 #include "nix/util/types.hh"
+#include "nix/util/fun.hh"
 #include "nix/util/hash.hh"
 #include "nix/store/content-address.hh"
+#include "nix/store/store-dir-config.hh"
 #include "nix/util/repair-flag.hh"
 #include "nix/store/derived-path-map.hh"
 #include "nix/store/parsed-derivations.hh"
@@ -55,7 +57,11 @@ struct DerivationOutput
          * @param drvName The name of the derivation this is an output of, without the `.drv`.
          * @param outputName The name of this output.
          */
-        StorePath path(const StoreDirConfig & store, std::string_view drvName, OutputNameView outputName) const;
+        StorePath path(
+            const StoreDirConfig & store,
+            std::string_view drvName,
+            OutputNameView outputName,
+            SeedPolicy seedPolicy = SeedPolicy::Default) const;
 
         bool operator==(const CAFixed &) const = default;
         auto operator<=>(const CAFixed &) const = default;
@@ -341,7 +347,8 @@ struct Derivation : BasicDerivation
     std::string unparse(
         const StoreDirConfig & store,
         bool maskOutputs,
-        DerivedPathMap<StringSet>::ChildNode::Map * actualInputs = nullptr) const;
+        DerivedPathMap<StringSet>::ChildNode::Map * actualInputs = nullptr,
+        SeedPolicy seedPolicy = SeedPolicy::Default) const;
 
     /**
      * Determine whether this derivation should be resolved before building.
@@ -478,7 +485,8 @@ class Store;
  *
  * This is a pure computation based on the derivation content and store directory.
  */
-StorePath computeStorePath(const StoreDirConfig & store, const Derivation & drv);
+StorePath
+computeStorePath(const StoreDirConfig & store, const Derivation & drv, SeedPolicy seedPolicy = SeedPolicy::Default);
 
 /**
  * Read a derivation from a file.
@@ -571,6 +579,24 @@ struct DrvHashModulo
  * derivation.
  */
 DrvHashModulo hashDerivationModulo(Store & store, const Derivation & drv, bool maskOutputs);
+
+/**
+ * Generalisation of `hashDerivationModulo` that does not need a full
+ * `Store` to recursively look up input derivation hashes: the caller
+ * supplies them via `inputDrvHash`. Also allows computing the hash a
+ * derivation *would* have under a different `SeedPolicy` (used for
+ * computing the unseeded equivalents of seeded store objects, see the
+ * `store-path-seeding` experimental feature).
+ *
+ * @param inputDrvHash Maps an input derivation path (as it occurs in
+ * `drv.inputDrvs`) to its `DrvHashModulo`.
+ */
+DrvHashModulo hashDerivationModulo(
+    const StoreDirConfig & store,
+    const Derivation & drv,
+    bool maskOutputs,
+    const fun<DrvHashModulo(const StorePath &)> & inputDrvHash,
+    SeedPolicy seedPolicy = SeedPolicy::Default);
 
 /**
  * If a derivation is input addressed and doesn't yet have its input

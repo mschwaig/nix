@@ -421,6 +421,37 @@ public:
           Set it to 1 to warn on all paths.
         )"};
 
+    Setting<std::string> storePathSeed{
+        this,
+        "",
+        "store-path-seed",
+        R"(
+          A seed value that is mixed into the calculation of every store path,
+          deterministically shifting all store paths away from their canonical
+          (unseeded) locations. The empty string (the default) disables seeding.
+
+          While a seed is set, the entire dependency graph builds at the shifted
+          locations, and for every locally built output Nix additionally records
+          the *unseeded* equivalent — the store path, NAR hash and references the
+          output would have had without a seed — in the local store database.
+          This is exposed to the `post-build-hook` via the `UNSEEDED_DRV_PATH`
+          and `UNSEEDED_OUT_PATHS` environment variables, and via
+          `nix path-info --json`.
+
+          Building the same derivation with two different seeds and comparing
+          the unseeded NAR hashes proves that the build is reproducible *and*
+          that the output contains no store path references that the reference
+          scanner cannot detect (e.g. compressed or otherwise obfuscated paths).
+
+          The Nix client and daemon must be configured with the same value;
+          changing it for a running daemon requires a restart. Substituters are
+          effectively disabled while a seed is set, since no cache holds the
+          seeded paths.
+        )",
+        {},
+        true,
+        Xp::StorePathSeeding};
+
     /**
      * Get the options needed for profile directory functions.
      */

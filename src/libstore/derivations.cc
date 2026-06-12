@@ -37,11 +37,11 @@ DerivationOutput::path(const StoreDirConfig & store, std::string_view drvName, O
         raw);
 }
 
-StorePath
-DerivationOutput::CAFixed::path(const StoreDirConfig & store, std::string_view drvName, OutputNameView outputName) const
+StorePath DerivationOutput::CAFixed::path(
+    const StoreDirConfig & store, std::string_view drvName, OutputNameView outputName, SeedPolicy seedPolicy) const
 {
     return store.makeFixedOutputPathFromCA(
-        outputPathName(drvName, outputName), ContentAddressWithReferences::withoutRefs(ca));
+        outputPathName(drvName, outputName), ContentAddressWithReferences::withoutRefs(ca), seedPolicy);
 }
 
 bool DerivationType::isCA() const
@@ -108,7 +108,8 @@ bool BasicDerivation::isBuiltin() const
     return builder.substr(0, 8) == "builtin:";
 }
 
-static auto infoForDerivation(const StoreDirConfig & store, const Derivation & drv)
+static auto
+infoForDerivation(const StoreDirConfig & store, const Derivation & drv, SeedPolicy seedPolicy = SeedPolicy::Default)
 {
     auto references = drv.inputSrcs;
     for (auto & i : drv.inputDrvs.map)
@@ -117,20 +118,20 @@ static auto infoForDerivation(const StoreDirConfig & store, const Derivation & d
        (that can be missing (of course) and should not necessarily be
        held during a garbage collection). */
     auto suffix = std::string(drv.name) + drvExtension;
-    auto contents = drv.unparse(store, false);
+    auto contents = drv.unparse(store, false, nullptr, seedPolicy);
     auto hash = hashString(HashAlgorithm::SHA256, contents);
     auto ca = TextInfo{.hash = hash, .references = references};
     return std::tuple{
         suffix,
         contents,
         references,
-        store.makeFixedOutputPathFromCA(suffix, ca),
+        store.makeFixedOutputPathFromCA(suffix, ca, seedPolicy),
     };
 }
 
-StorePath computeStorePath(const StoreDirConfig & store, const Derivation & drv)
+StorePath computeStorePath(const StoreDirConfig & store, const Derivation & drv, SeedPolicy seedPolicy)
 {
-    auto [_suffix, _contents, _references, path] = infoForDerivation(store, drv);
+    auto [_suffix, _contents, _references, path] = infoForDerivation(store, drv, seedPolicy);
     return path;
 }
 
@@ -641,7 +642,10 @@ static bool hasDynamicDrvDep(const Derivation & drv)
 }
 
 std::string Derivation::unparse(
-    const StoreDirConfig & store, bool maskOutputs, DerivedPathMap<StringSet>::ChildNode::Map * actualInputs) const
+    const StoreDirConfig & store,
+    bool maskOutputs,
+    DerivedPathMap<StringSet>::ChildNode::Map * actualInputs,
+    SeedPolicy seedPolicy) const
 {
     std::string s;
     s.reserve(65536);
@@ -679,7 +683,8 @@ std::string Derivation::unparse(
                 },
                 [&](const DerivationOutput::CAFixed & dof) {
                     s += ',';
-                    printUnquotedString(s, maskOutputs ? ""sv : store.printStorePath(dof.path(store, name, i.first)));
+                    printUnquotedString(
+                        s, maskOutputs ? ""sv : store.printStorePath(dof.path(store, name, i.first, seedPolicy)));
                     s += ',';
                     printUnquotedString(s, dof.ca.printMethodAlgo());
                     s += ',';
@@ -899,6 +904,17 @@ static DrvHashModulo pathDerivationModulo(Store & store, const StorePath & drvPa
  */
 DrvHashModulo hashDerivationModulo(Store & store, const Derivation & drv, bool maskOutputs)
 {
+    return hashDerivationModulo(
+        store, drv, maskOutputs, [&](const StorePath & drvPath) { return pathDerivationModulo(store, drvPath); });
+}
+
+DrvHashModulo hashDerivationModulo(
+    const StoreDirConfig & store,
+    const Derivation & drv,
+    bool maskOutputs,
+    const fun<DrvHashModulo(const StorePath &)> & inputDrvHash,
+    SeedPolicy seedPolicy)
+{
     /* Return a fixed hash for fixed-output derivations. */
     if (drv.type().isFixed()) {
         std::map<std::string, Hash> outputHashes;
@@ -907,7 +923,7 @@ DrvHashModulo hashDerivationModulo(Store & store, const Derivation & drv, bool m
             auto hash = hashString(
                 HashAlgorithm::SHA256,
                 "fixed:out:" + dof.ca.printMethodAlgo() + ":" + dof.ca.hash.to_string(HashFormat::Base16, false) + ":"
-                    + store.printStorePath(dof.path(store, drv.name, i.first)));
+                    + store.printStorePath(dof.path(store, drv.name, i.first, seedPolicy)));
             outputHashes.insert_or_assign(i.first, std::move(hash));
         }
         return outputHashes;
@@ -939,7 +955,7 @@ DrvHashModulo hashDerivationModulo(Store & store, const Derivation & drv, bool m
             return DrvHashModulo::DeferredDrv{};
         }
 
-        const auto & res = pathDerivationModulo(store, drvPath);
+        const auto res = inputDrvHash(drvPath);
         if (std::visit(
                 overloaded{
                     [&](const DrvHashModulo::DeferredDrv &) { return true; },
@@ -969,7 +985,7 @@ DrvHashModulo hashDerivationModulo(Store & store, const Derivation & drv, bool m
         }
     }
 
-    return hashString(HashAlgorithm::SHA256, drv.unparse(store, maskOutputs, &inputs2));
+    return hashString(HashAlgorithm::SHA256, drv.unparse(store, maskOutputs, &inputs2, seedPolicy));
 }
 
 static DerivationOutput readDerivationOutput(Source & in, const StoreDirConfig & store)

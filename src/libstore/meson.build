@@ -182,6 +182,7 @@ generated_headers = []
 foreach header : [
   'schema.sql',
   'ca-specific-schema.sql',
+  'seed-specific-schema.sql',
 ]
   generated_headers += gen_header.process(header)
 endforeach
@@ -357,6 +358,7 @@ sources = files(
   'store-reference.cc',
   'store-registration.cc',
   'uds-remote-store.cc',
+  'unseed.cc',
   'worker-protocol-connection.cc',
   'worker-protocol.cc',
 )

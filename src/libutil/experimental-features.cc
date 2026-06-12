@@ -27,7 +27,7 @@ void MissingExperimentalFeature::anchor() {}
  * feature, we either have no issue at all if few features are not added
  * at the end of the list, or a proper merge conflict if they are.
  */
-constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::BLAKE3Hashes);
+constexpr size_t numXpFeatures = 1 + static_cast<size_t>(Xp::StorePathSeeding);
 
 constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails = {{
     {
@@ -281,6 +281,18 @@ constexpr std::array<ExperimentalFeatureDetails, numXpFeatures> xpFeatureDetails
         )",
         .trackingUrl = "https://github.com/NixOS/nix/milestone/60",
     },
+    {
+        .tag = Xp::StorePathSeeding,
+        .name = "store-path-seeding",
+        .description = R"(
+            Allow setting a seed value (see the [`store-path-seed`](@docroot@/command-ref/conf-file.md#conf-store-path-seed) setting) that is mixed into store path calculation.
+
+            Building the same derivations with different seeds and comparing the
+            *unseeded* equivalents of the outputs proves that the builds are
+            reproducible and contain no references that Nix's reference scanner
+            cannot see.
+        )",
+    },
 }};
 
 static_assert(
@@ -321,8 +333,9 @@ nlohmann::json documentExperimentalFeatures()
     for (auto & xpFeature : xpFeatureDetails) {
         std::stringstream docOss;
         docOss << stripIndentation(xpFeature.description);
-        docOss << fmt(
-            "\nRefer to [%1% tracking issue](%2%) for feature tracking.", xpFeature.name, xpFeature.trackingUrl);
+        if (!xpFeature.trackingUrl.empty())
+            docOss << fmt(
+                "\nRefer to [%1% tracking issue](%2%) for feature tracking.", xpFeature.name, xpFeature.trackingUrl);
         res[std::string{xpFeature.name}] = trim(docOss.str());
     }
     return (nlohmann::json) res;

@@ -167,6 +167,7 @@ suites = [
       'simple.sh',
       'ssh-relay.sh',
       'store-info.sh',
+      'store-path-seeding.sh',
       'store-print-env.sh',
       'structured-attrs.sh',
       'substitute-with-invalid-ca.sh',

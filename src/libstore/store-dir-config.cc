@@ -71,22 +71,37 @@ also update the user-visible behavior, please update the specification
 to match.
 */
 
-StorePath StoreDirConfig::makeStorePath(std::string_view type, std::string_view hash, std::string_view name) const
+StorePath StoreDirConfig::makeStorePath(
+    std::string_view type, std::string_view hash, std::string_view name, SeedPolicy seedPolicy) const
 {
     /* e.g., "source:sha256:1abc...:/nix/store:foo.tar.gz" */
-    auto s = std::string(type) + ":" + std::string(hash) + ":" + storeDir + ":" + std::string(name);
+    auto s = std::string(type) + ":" + std::string(hash) + ":" + storeDir;
+    /* If a seed is configured (experimental feature
+       `store-path-seeding`), mix it into the fingerprint, shifting the
+       resulting path away from its canonical location:
+       "source:sha256:1abc...:/nix/store:<seed>:foo.tar.gz" */
+    if (seedPolicy == SeedPolicy::Default) {
+        /* The setting is gated on the experimental feature, so it
+           cannot be non-empty unless `store-path-seeding` is enabled. */
+        auto & seed = settings.storePathSeed.get();
+        if (!seed.empty())
+            s += ":" + seed;
+    }
+    s += ":" + std::string(name);
     auto h = compressHash(hashString(HashAlgorithm::SHA256, s), 20);
     return StorePath(h, name);
 }
 
-StorePath StoreDirConfig::makeStorePath(std::string_view type, const Hash & hash, std::string_view name) const
+StorePath StoreDirConfig::makeStorePath(
+    std::string_view type, const Hash & hash, std::string_view name, SeedPolicy seedPolicy) const
 {
-    return makeStorePath(type, hash.to_string(HashFormat::Base16, true), name);
+    return makeStorePath(type, hash.to_string(HashFormat::Base16, true), name, seedPolicy);
 }
 
-StorePath StoreDirConfig::makeOutputPath(std::string_view id, const Hash & hash, std::string_view name) const
+StorePath StoreDirConfig::makeOutputPath(
+    std::string_view id, const Hash & hash, std::string_view name, SeedPolicy seedPolicy) const
 {
-    return makeStorePath("output:" + std::string{id}, hash, outputPathName(name, id));
+    return makeStorePath("output:" + std::string{id}, hash, outputPathName(name, id), seedPolicy);
 }
 
 /* Stuff the references (if any) into the type.  This is a bit
@@ -103,7 +118,8 @@ static std::string makeType(const StoreDirConfig & store, std::string && type, c
     return std::move(type);
 }
 
-StorePath StoreDirConfig::makeFixedOutputPath(std::string_view name, const FixedOutputInfo & info) const
+StorePath
+StoreDirConfig::makeFixedOutputPath(std::string_view name, const FixedOutputInfo & info, SeedPolicy seedPolicy) const
 {
     if (info.method == FileIngestionMethod::Git
         && !(info.hash.algo == HashAlgorithm::SHA1 || info.hash.algo == HashAlgorithm::SHA256)) {
@@ -112,7 +128,7 @@ StorePath StoreDirConfig::makeFixedOutputPath(std::string_view name, const Fixed
     }
 
     if (info.hash.algo == HashAlgorithm::SHA256 && info.method == FileIngestionMethod::NixArchive) {
-        return makeStorePath(makeType(*this, "source", info.references), info.hash, name);
+        return makeStorePath(makeType(*this, "source", info.references), info.hash, name, seedPolicy);
     } else {
         if (!info.references.empty()) {
             throw Error(
@@ -123,12 +139,12 @@ StorePath StoreDirConfig::makeFixedOutputPath(std::string_view name, const Fixed
         auto payload =
             "fixed:out:" + makeFileIngestionPrefix(info.method) + info.hash.to_string(HashFormat::Base16, true) + ":";
         auto digest = hashString(HashAlgorithm::SHA256, payload);
-        return makeStorePath("output:out", digest, name);
+        return makeStorePath("output:out", digest, name, seedPolicy);
     }
 }
 
-StorePath
-StoreDirConfig::makeFixedOutputPathFromCA(std::string_view name, const ContentAddressWithReferences & ca) const
+StorePath StoreDirConfig::makeFixedOutputPathFromCA(
+    std::string_view name, const ContentAddressWithReferences & ca, SeedPolicy seedPolicy) const
 {
     // New template
     return std::visit(
@@ -144,9 +160,10 @@ StoreDirConfig::makeFixedOutputPathFromCA(std::string_view name, const ContentAd
                             .self = false,
                         }),
                     ti.hash,
-                    name);
+                    name,
+                    seedPolicy);
             },
-            [&](const FixedOutputInfo & foi) { return makeFixedOutputPath(name, foi); }},
+            [&](const FixedOutputInfo & foi) { return makeFixedOutputPath(name, foi, seedPolicy); }},
         ca.raw);
 }
 
@@ -156,7 +173,8 @@ std::pair<StorePath, Hash> StoreDirConfig::computeStorePath(
     ContentAddressMethod method,
     HashAlgorithm hashAlgo,
     const StorePathSet & references,
-    PathFilter & filter) const
+    PathFilter & filter,
+    SeedPolicy seedPolicy) const
 {
     auto [h, size] = hashPath(path, method.getFileIngestionMethod(), hashAlgo, filter);
     if (settings.warnLargePathThreshold && size && *size >= settings.warnLargePathThreshold)
@@ -170,7 +188,8 @@ std::pair<StorePath, Hash> StoreDirConfig::computeStorePath(
                 {
                     .others = references,
                     .self = false,
-                })),
+                }),
+            seedPolicy),
         h,
     };
 }

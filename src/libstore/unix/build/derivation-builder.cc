@@ -1646,6 +1646,9 @@ SingleDrvOutputs DerivationBuilderImpl::registerOutputs()
         store.registerValidPaths(infos2);
     }
 
+    if (!settings.storePathSeed.get().empty())
+        recordUnseededOutputs(infos);
+
     /* If we made it this far, we are sure the output matches the
        derivation That means it's safe to link the derivation to the
        output hash. We must do that for floating CA derivations, which
@@ -1673,6 +1676,84 @@ SingleDrvOutputs DerivationBuilderImpl::registerOutputs()
     }
 
     return builtOutputs;
+}
+
+void DerivationBuilderImpl::recordUnseededOutputs(const std::map<std::string, ValidPathInfo> & infos)
+{
+    if (drv.type().isImpure()) {
+        warn(
+            "not recording unseeded equivalents for the outputs of impure derivation '%s'",
+            store.printStorePath(drvPath));
+        return;
+    }
+
+    try {
+        Unseeder unseeder(store);
+
+        /* Record the derivation's own unseeded equivalent first; this
+           also covers all input derivations recursively, and is what
+           `UNSEEDED_DRV_PATH` is later answered from. */
+        unseeder.unseedDrv(drvPath);
+
+        for (auto & [outputName, info] : infos) {
+            auto unseededPath = unseeder.unseedPath(info.path);
+
+            /* Rewrites from seeded to unseeded hash parts, for the
+               output itself and everything it references. */
+            StringMap rewrites;
+            rewrites.insert_or_assign(std::string{info.path.hashPart()}, std::string{unseededPath.hashPart()});
+            StorePathSet unseededRefs;
+            for (auto & r : info.references) {
+                auto unseededRef = r == info.path ? unseededPath : unseeder.unseedPath(r);
+                rewrites.insert_or_assign(std::string{r.hashPart()}, std::string{unseededRef.hashPart()});
+                unseededRefs.insert(std::move(unseededRef));
+            }
+
+            /* The NAR hash the output would have had without a seed:
+               hash the contents with all references rewritten to their
+               unseeded equivalents. No need to materialize anything. */
+            HashSink hashSink(HashAlgorithm::SHA256);
+            RewritingSink rewritingSink(rewrites, hashSink);
+            store.narFromPath(info.path, rewritingSink);
+            rewritingSink.flush();
+            auto narHash = hashSink.finish();
+
+            /* Compare against recordings of the same output built
+               under other seeds. A mismatch means the build is either
+               not reproducible or contains a reference the reference
+               scanner cannot see. The verdict is left to external
+               tooling (e.g. a post-build hook); we only warn. */
+            for (auto & [otherSeededPath, otherNarHash] : store.queryUnseededNarHashes(unseededPath)) {
+                if (otherSeededPath != info.path && otherNarHash != narHash.hash)
+                    warn(
+                        "the unseeded contents of '%s' (NAR hash '%s') differ from those previously recorded for '%s' (NAR hash '%s'); "
+                        "this derivation is either not reproducible or its output contains a hidden store path reference",
+                        store.printStorePath(info.path),
+                        narHash.hash.to_string(HashFormat::Nix32, true),
+                        store.printStorePath(otherSeededPath),
+                        otherNarHash.to_string(HashFormat::Nix32, true));
+            }
+
+            store.upsertUnseededPath(
+                info.path,
+                UnseededPathInfo{
+                    .unseededPath = unseededPath,
+                    .narHash = narHash.hash,
+                    .narSize = narHash.numBytesDigested,
+                    .references = std::move(unseededRefs),
+                });
+
+            debug(
+                "recorded unseeded equivalent '%s' for output '%s' of '%s'",
+                store.printStorePath(unseededPath),
+                outputName,
+                store.printStorePath(drvPath));
+        }
+    } catch (Error & e) {
+        e.addTrace(
+            {}, "while recording the unseeded equivalents of the outputs of '%s'", store.printStorePath(drvPath));
+        logWarning(e.info());
+    }
 }
 
 void DerivationBuilderImpl::cleanupBuild(bool force)

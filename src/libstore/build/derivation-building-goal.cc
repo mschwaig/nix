@@ -137,7 +137,7 @@ struct PostBuildHookState
 
 static std::unique_ptr<PostBuildHookState> runPostBuildHook(
     const WorkerSettings & workerSettings,
-    const StoreDirConfig & store,
+    Store & store,
     Logger & logger,
     const StorePath & drvPath,
     const StorePathSet & outputPaths);
@@ -596,9 +596,12 @@ Goal::Co DerivationBuildingGoal::tryToBuild(StorePathSet inputPaths)
         co_return Return{};
     };
 
-    if (buildMode != bmNormal) {
+    if (buildMode != bmNormal || !settings.storePathSeed.get().empty()) {
         // Check and repair modes operate on the state of this store specifically,
-        // so they must always build locally.
+        // so they must always build locally. The same goes for seeded builds:
+        // the unseeded equivalents of the outputs are recorded in this store's
+        // database, and a remote builder would need an identical
+        // `store-path-seed` configuration anyway.
         bool valid = false;
         co_await tryBuildLocally(valid);
         if (valid)
@@ -1104,7 +1107,7 @@ Goal::Co DerivationBuildingGoal::buildLocally(
 
 static std::unique_ptr<PostBuildHookState> runPostBuildHook(
     const WorkerSettings & workerSettings,
-    const StoreDirConfig & store,
+    Store & store,
     Logger & logger,
     const StorePath & drvPath,
     const StorePathSet & outputPaths)
@@ -1123,6 +1126,42 @@ static std::unique_ptr<PostBuildHookState> runPostBuildHook(
     hookEnvironment.emplace(
         OS_STR("OUT_PATHS"), string_to_os_string(chomp(concatStringsSep(" ", store.printStorePathSet(outputPaths)))));
     hookEnvironment.emplace(OS_STR("NIX_CONFIG"), string_to_os_string(globalConfig.toKeyValue()));
+
+    /* With a `store-path-seed` set, also expose the unseeded
+       equivalents (if recorded), so that the hook can make (and e.g.
+       sign) statements about the canonical store paths. The
+       `UNSEEDED_OUT_PATHS` variable is only set when every output has
+       a recorded equivalent, so that it always corresponds 1:1 to
+       `OUT_PATHS`. */
+    if (!settings.storePathSeed.get().empty()) {
+        if (auto * localStore = dynamic_cast<LocalStore *>(&store)) {
+            try {
+                if (auto drvRow = localStore->queryUnseededPath(drvPath))
+                    hookEnvironment.emplace(
+                        OS_STR("UNSEEDED_DRV_PATH"), string_to_os_string(store.printStorePath(drvRow->unseededPath)));
+                Strings unseededOutputs;
+                bool allRecorded = true;
+                /* Iterate in the same (sorted) order that `OUT_PATHS`
+                   is rendered in. */
+                for (auto & outputPath : store.printStorePathSet(outputPaths)) {
+                    auto row = localStore->queryUnseededPath(store.parseStorePath(outputPath));
+                    if (!row) {
+                        allRecorded = false;
+                        break;
+                    }
+                    unseededOutputs.push_back(store.printStorePath(row->unseededPath));
+                }
+                if (allRecorded)
+                    hookEnvironment.emplace(
+                        OS_STR("UNSEEDED_OUT_PATHS"),
+                        string_to_os_string(chomp(concatStringsSep(" ", unseededOutputs))));
+            } catch (Error & e) {
+                e.addTrace({}, "while looking up unseeded equivalents for the post-build hook");
+                if (lvlWarn <= verbosity)
+                    logger.logEI(lvlWarn, e.info());
+            }
+        }
+    }
 
     ProcessOptions processOptions;
     processOptions.allowVfork = false;

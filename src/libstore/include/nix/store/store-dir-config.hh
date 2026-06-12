@@ -18,6 +18,25 @@ MakeError(BadStorePath, Error);
 MakeError(BadStorePathName, BadStorePath);
 
 /**
+ * Controls whether store path calculation incorporates the
+ * `store-path-seed` setting (experimental feature
+ * `store-path-seeding`).
+ */
+enum struct SeedPolicy {
+    /**
+     * Mix the configured `store-path-seed` (if any) into the path
+     * fingerprint. This is the default for all normal operation.
+     */
+    Default,
+    /**
+     * Ignore any configured seed and compute the canonical (unseeded)
+     * store path. Used when computing the unseeded equivalents of
+     * seeded store objects.
+     */
+    Unseeded,
+};
+
+/**
  * @todo This should just be inherited by `StoreConfig`. However, it
  * would be a huge amount of churn if `Store` didn't have these methods
  * anymore, forcing a bunch of code to go from `store.method(...)` to
@@ -74,14 +93,30 @@ struct StoreDirConfig
     /**
      * Constructs a unique store path name.
      */
-    StorePath makeStorePath(std::string_view type, std::string_view hash, std::string_view name) const;
-    StorePath makeStorePath(std::string_view type, const Hash & hash, std::string_view name) const;
+    StorePath makeStorePath(
+        std::string_view type,
+        std::string_view hash,
+        std::string_view name,
+        SeedPolicy seedPolicy = SeedPolicy::Default) const;
+    StorePath makeStorePath(
+        std::string_view type,
+        const Hash & hash,
+        std::string_view name,
+        SeedPolicy seedPolicy = SeedPolicy::Default) const;
 
-    StorePath makeOutputPath(std::string_view id, const Hash & hash, std::string_view name) const;
+    StorePath makeOutputPath(
+        std::string_view id,
+        const Hash & hash,
+        std::string_view name,
+        SeedPolicy seedPolicy = SeedPolicy::Default) const;
 
-    StorePath makeFixedOutputPath(std::string_view name, const FixedOutputInfo & info) const;
+    StorePath makeFixedOutputPath(
+        std::string_view name, const FixedOutputInfo & info, SeedPolicy seedPolicy = SeedPolicy::Default) const;
 
-    StorePath makeFixedOutputPathFromCA(std::string_view name, const ContentAddressWithReferences & ca) const;
+    StorePath makeFixedOutputPathFromCA(
+        std::string_view name,
+        const ContentAddressWithReferences & ca,
+        SeedPolicy seedPolicy = SeedPolicy::Default) const;
 
     /**
      * Read-only variant of addToStore(). It returns the store
@@ -93,7 +128,8 @@ struct StoreDirConfig
         ContentAddressMethod method = ContentAddressMethod::Raw::NixArchive,
         HashAlgorithm hashAlgo = HashAlgorithm::SHA256,
         const StorePathSet & references = {},
-        PathFilter & filter = defaultPathFilter) const;
+        PathFilter & filter = defaultPathFilter,
+        SeedPolicy seedPolicy = SeedPolicy::Default) const;
 };
 
 } // namespace nix

@@ -119,6 +119,9 @@ struct LocalStore::State::Stmts
     SQLiteStmt QueryRealisedOutput;
     SQLiteStmt QueryPathFromHashPart;
     SQLiteStmt QueryValidPaths;
+    SQLiteStmt UpsertUnseededPath;
+    SQLiteStmt QueryUnseededPath;
+    SQLiteStmt QueryUnseededNarHashes;
 };
 
 LocalStore::LocalStore(ref<const Config> config)
@@ -399,6 +402,30 @@ LocalStore::LocalStore(ref<const Config> config)
                     ;
             )");
     }
+    if (experimentalFeatureSettings.isEnabled(Xp::StorePathSeeding)) {
+        state->stmts->UpsertUnseededPath.create(
+            state->db,
+            R"(
+                insert or replace into UnseededPathsV1
+                    (seededPath, unseededPath, unseededNarHash, unseededNarSize, unseededRefs, unseededDrvHash)
+                values (?, ?, ?, ?, ?, ?)
+                ;
+            )");
+        state->stmts->QueryUnseededPath.create(
+            state->db,
+            R"(
+                select unseededPath, unseededNarHash, unseededNarSize, unseededRefs, unseededDrvHash
+                from UnseededPathsV1 where seededPath = ?
+                ;
+            )");
+        state->stmts->QueryUnseededNarHashes.create(
+            state->db,
+            R"(
+                select seededPath, unseededNarHash from UnseededPathsV1
+                where unseededPath = ? and unseededNarHash is not null
+                ;
+            )");
+    }
 }
 
 AutoCloseFD LocalStore::openGCLock()
@@ -637,6 +664,12 @@ bool LocalStore::upgradeDBSchema(State & state, bool dryRun)
 #include "ca-specific-schema.sql.gen.hh"
         );
 
+    if (experimentalFeatureSettings.isEnabled(Xp::StorePathSeeding))
+        maybeUpgrade(
+            "20260612-store-path-seeding",
+#include "seed-specific-schema.sql.gen.hh"
+        );
+
     maybeUpgrade("20260309-drop-redundant-indexreferrer", "drop index if exists IndexReferrer");
 
     return ret;
@@ -725,6 +758,67 @@ void LocalStore::registerDrvOutput(const Realisation & info)
                 .apply(concatStringsSep(" ", Signature::toStrings(info.signatures)))
                 .exec();
         }
+    });
+}
+
+void LocalStore::upsertUnseededPath(const StorePath & seededPath, const UnseededPathInfo & info)
+{
+    experimentalFeatureSettings.require(Xp::StorePathSeeding);
+    retrySQLite<void>([&]() {
+        auto state(_state->lock());
+        state->stmts->UpsertUnseededPath.use()
+            .apply(seededPath.to_string())
+            .apply(info.unseededPath.to_string())
+            .apply(info.narHash ? info.narHash->to_string(HashFormat::Nix32, true) : "", (bool) info.narHash)
+            .apply(info.narSize ? (int64_t) *info.narSize : 0, (bool) info.narSize)
+            .apply(
+                info.references
+                    ? concatMapStringsSep(
+                          " ", *info.references, [&](const StorePath & p) { return std::string{p.to_string()}; })
+                    : "",
+                (bool) info.references)
+            .apply(info.drvHash ? renderDrvHashModulo(*info.drvHash) : "", (bool) info.drvHash)
+            .exec();
+    });
+}
+
+std::optional<UnseededPathInfo> LocalStore::queryUnseededPath(const StorePath & seededPath)
+{
+    experimentalFeatureSettings.require(Xp::StorePathSeeding);
+    return retrySQLite<std::optional<UnseededPathInfo>>([&]() -> std::optional<UnseededPathInfo> {
+        auto state(_state->lock());
+        auto use(state->stmts->QueryUnseededPath.use().apply(seededPath.to_string()));
+        if (!use.next())
+            return std::nullopt;
+        UnseededPathInfo info{
+            .unseededPath = StorePath{use.getStr(0)},
+        };
+        if (!use.isNull(1))
+            info.narHash = Hash::parseAnyPrefixed(use.getStr(1));
+        if (!use.isNull(2))
+            info.narSize = (uint64_t) use.getInt(2);
+        if (!use.isNull(3)) {
+            StorePathSet refs;
+            for (auto & r : tokenizeString<Strings>(use.getStr(3), " "))
+                refs.insert(StorePath{r});
+            info.references = std::move(refs);
+        }
+        if (!use.isNull(4))
+            info.drvHash = parseDrvHashModulo(use.getStr(4));
+        return info;
+    });
+}
+
+std::map<StorePath, Hash> LocalStore::queryUnseededNarHashes(const StorePath & unseededPath)
+{
+    experimentalFeatureSettings.require(Xp::StorePathSeeding);
+    return retrySQLite<std::map<StorePath, Hash>>([&]() {
+        auto state(_state->lock());
+        std::map<StorePath, Hash> res;
+        auto use(state->stmts->QueryUnseededNarHashes.use().apply(unseededPath.to_string()));
+        while (use.next())
+            res.insert_or_assign(StorePath{use.getStr(0)}, Hash::parseAnyPrefixed(use.getStr(1)));
+        return res;
     });
 }
 
